@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Persimpangan Kota Neon 3D</title>
+<style>
+:root{--bg:#02040c;--cy:#2ec4ff;--tx:#e8f4ff}
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{height:100%;background:var(--bg);overflow:hidden;font-family:"Segoe UI",system-ui,sans-serif;color:var(--tx)}
+canvas{display:block;touch-action:none}
+.hud{position:fixed;pointer-events:none}
+#title{top:18px;left:20px}
+#title h1{font-size:clamp(16px,3vw,26px);font-weight:800;letter-spacing:.14em;text-shadow:0 0 18px var(--cy)}
+#title p{font-size:12px;opacity:.65;margin-top:4px}
+#stat{top:18px;right:20px;display:flex;flex-direction:column;gap:6px;align-items:flex-end;font-size:12px}
+.chip{display:flex;gap:8px;align-items:center;padding:6px 12px;border-radius:99px;background:rgba(6,18,48,.65);border:1px solid rgba(46,196,255,.35);backdrop-filter:blur(8px)}
+.dot{width:10px;height:10px;border-radius:50%;background:#ff2e55;box-shadow:0 0 10px currentColor;color:#ff2e55}
+#btns{bottom:20px;left:50%;transform:translateX(-50%);display:flex;gap:10px;pointer-events:auto;flex-wrap:wrap;justify-content:center;width:92%}
+button{font:600 13px inherit;font-family:inherit;color:var(--tx);background:rgba(6,18,48,.7);border:1px solid rgba(46,196,255,.45);padding:9px 16px;border-radius:99px;cursor:pointer;backdrop-filter:blur(8px);transition:background .2s,box-shadow .2s}
+button:hover,button.on{background:rgba(30,107,255,.55);box-shadow:0 0 16px rgba(46,196,255,.5)}
+button:focus-visible{outline:2px solid var(--cy);outline-offset:2px}
+#hint{bottom:70px;left:0;right:0;text-align:center;font-size:12px;opacity:.5}
+</style>
+</head>
+<body>
+<div class="hud" id="title"><h1>Persimpangan Kota Neon</h1><p>Simulasi lalu lintas 3D</p></div>
+<div class="hud" id="stat">
+  <div class="chip"><span class="dot" id="dx"></span>Jalan Barat–Timur</div>
+  <div class="chip"><span class="dot" id="dz"></span>Jalan Utara–Selatan</div>
+  <div class="chip" id="cnt">Kendaraan 0 · Pejalan kaki 0</div>
+</div>
+<div class="hud" id="hint">Geser untuk memutar, scroll untuk zoom</div>
+<div class="hud" id="btns">
+  <button id="bRot" class="on">Putar otomatis</button>
+  <button id="bCam">Ganti kamera</button>
+  <button id="bPause">Jeda</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+const T=THREE,STOP=12,LO=[2.1,4.4];
+const renderer=new T.WebGLRenderer({antialias:true});
+renderer.setPixelRatio(Math.min(devicePixelRatio,2));
+renderer.setSize(innerWidth,innerHeight);
+renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
+document.body.appendChild(renderer.domElement);
+const scene=new T.Scene();
+scene.background=new T.Color(0x030614);
+scene.fog=new T.FogExp2(0x040a22,.0085);
+const camera=new T.PerspectiveCamera(50,innerWidth/innerHeight,.5,900);
+
+/* ---------- helpers ---------- */
+const M=(c,o={})=>new T.MeshStandardMaterial(Object.assign({color:c,roughness:.5,metalness:.3},o));
+const E=c=>new T.MeshBasicMaterial({color:c});
+const B=(w,h,d,mat,x=0,y=0,z=0,p)=>{const m=new T.Mesh(new T.BoxGeometry(w,h,d),mat);m.position.set(x,y,z);(p||scene).add(m);return m;};
+const gt=(()=>{const c=document.createElement('canvas');c.width=c.height=64;const g=c.getContext('2d');const r=g.createRadialGradient(32,32,0,32,32,32);r.addColorStop(0,'rgba(255,255,255,1)');r.addColorStop(1,'rgba(255,255,255,0)');g.fillStyle=r;g.fillRect(0,0,64,64);return new T.CanvasTexture(c)})();
+const glowMat=(c,o)=>new T.MeshBasicMaterial({map:gt,color:c,transparent:true,opacity:o,blending:T.AdditiveBlending,depthWrite:false});
+function floorGlow(g,w,l,z,c,o){const m=new T.Mesh(new T.PlaneGeometry(w,l),glowMat(c,o));m.rotation.x=-Math.PI/2;m.position.set(0,.04,z);g.add(m);}
+
+/* ---------- lampu & langit ---------- */
+scene.add(new T.HemisphereLight(0x3a6cff,0x05060f,.75));
+const moon=new T.DirectionalLight(0x8fb4ff,.8);
+moon.position.set(-50,80,-30);moon.castShadow=true;moon.shadow.mapSize.set(2048,2048);
+Object.assign(moon.shadow.camera,{left:-90,right:90,top:90,bottom:-90,near:10,far:260});
+scene.add(moon);
+for(const x of[-14,14])for(const z of[-14,14]){const l=new T.PointLight(0x2ec4ff,1.1,48);l.position.set(x,7,z);scene.add(l);}
+{const n=600,a=new Float32Array(n*3);for(let i=0;i<n;i++){const u=Math.random()*6.283,v=.1+Math.random()*1.2,R=520;a[i*3]=R*Math.cos(v)*Math.cos(u);a[i*3+1]=R*Math.sin(v);a[i*3+2]=R*Math.cos(v)*Math.sin(u);}
+ const g=new T.BufferGeometry();g.setAttribute('position',new T.BufferAttribute(a,3));
+ scene.add(new T.Points(g,new T.PointsMaterial({color:0xbfe0ff,size:1.6,sizeAttenuation:false,fog:false})));
+ const mo=new T.Mesh(new T.SphereGeometry(16,24,16),new T.MeshBasicMaterial({color:0xd6e6ff,fog:false}));mo.position.set(-190,150,-300);scene.add(mo);}
+
+/* ---------- jalan ---------- */
+const ground=new T.Mesh(new T.PlaneGeometry(900,900),M(0x04081a,{roughness:.9}));ground.rotation.x=-Math.PI/2;ground.receiveShadow=true;scene.add(ground);
+const roadM=M(0x070a1c,{roughness:.3,metalness:.5});
+B(210,.1,12,roadM,0,.05,0).receiveShadow=true;
+B(12,.1,210,roadM,0,.052,0).receiveShadow=true;
+const blockM=M(0x0b1430,{roughness:.8});
+for(const sx of[1,-1])for(const sz of[1,-1]){
+  B(80,.3,80,blockM,sx*46,.15,sz*46).receiveShadow=true;
+  B(80,.08,.2,E(0x2ec4ff),sx*46,.32,sz*6.1);B(.2,.08,80,E(0x2ec4ff),sx*6.1,.32,sz*46);
+}
+const WL=E(0xdfeaff),CY=E(0x2ec4ff);
+function pl(w,d,x,z,m){const e=new T.Mesh(new T.PlaneGeometry(w,d),m);e.rotation.x=-Math.PI/2;e.position.set(x,.115,z);scene.add(e);}
+for(const sg of[1,-1]){
+  pl(94,.14,sg*53,.2,CY);pl(94,.14,sg*53,-.2,CY);pl(.14,94,.2,sg*53,CY);pl(.14,94,-.2,sg*53,CY);
+  for(const sd of[1,-1]){
+    pl(94,.12,sg*53,sd*5.85,WL);pl(.12,94,sd*5.85,sg*53,WL);
+    for(let x=14;x<100;x+=5){pl(2.4,.14,sg*x,sd*3.3,WL);pl(.14,2.4,sd*3.3,sg*x,WL);}
+    for(let i=-3;i<=3;i++){pl(3,.8,sg*9,i*1.6,WL);pl(.8,3,i*1.6,sg*9,WL);}
+  }
+}
+pl(.4,6,-12.2,-3,WL);pl(.4,6,12.2,3,WL);pl(6,.4,3,-12.2,WL);pl(6,.4,-3,12.2,WL);
+const ring=new T.Mesh(new T.RingGeometry(5,5.3,64),new T.MeshBasicMaterial({color:0x2ec4ff,transparent:true,opacity:.5,side:T.DoubleSide}));
+ring.rotation.x=-Math.PI/2;ring.position.y=.12;scene.add(ring);
+
+/* ---------- gedung ---------- */
+function winTex(cols){const c=document.createElement('canvas');c.width=c.height=128;const g=c.getContext('2d');g.fillStyle='#0c1a40';g.fillRect(0,0,128,128);
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++){if(Math.random()<.62){g.fillStyle=cols[Math.random()*cols.length|0];g.globalAlpha=.55+Math.random()*.45;g.fillRect(i*32+6,j*32+8,20,16);}}
+  g.globalAlpha=1;const t=new T.CanvasTexture(c);t.wrapS=t.wrapT=T.RepeatWrapping;t.anisotropy=4;return t;}
+const TX=[winTex(['#7fd4ff','#2e8bff','#bfe9ff']),winTex(['#ffd98a','#7fd4ff','#ffffff']),winTex(['#5aa8ff','#a58bff','#7fd4ff'])];
+function label(txt,col,sw){const c=document.createElement('canvas');c.width=512;c.height=128;const g=c.getContext('2d');
+  g.fillStyle='rgba(2,6,20,.88)';g.fillRect(0,0,512,128);g.strokeStyle=col;g.lineWidth=6;g.strokeRect(6,6,500,116);
+  g.font='800 '+(txt.length>8?50:64)+'px "Segoe UI",system-ui,sans-serif';g.textAlign='center';g.textBaseline='middle';g.shadowColor=col;g.shadowBlur=22;g.fillStyle='#fff';g.fillText(txt,256,68);
+  return new T.Mesh(new T.PlaneGeometry(sw,sw/4),new T.MeshBasicMaterial({map:new T.CanvasTexture(c)}));}
+const blink=[];
+function tower(x,z,w,d,h,ti,txt,col){
+  const g=new T.BoxGeometry(w,h,d),uv=g.attributes.uv,S=[[d,h],[d,h],[w,d],[w,d],[w,h],[w,h]];
+  for(let f=0;f<6;f++)for(let k=0;k<4;k++){const i=f*4+k;uv.setXY(i,uv.getX(i)*S[f][0]/6,uv.getY(i)*S[f][1]/6);}
+  const t=TX[ti],sm=M(0xb8c8ff,{map:t,emissiveMap:t,emissive:0xffffff,roughness:.5,metalness:.2}),rm=M(0x0a1230);
+  const m=new T.Mesh(g,[sm,sm,rm,rm,sm,sm]);m.position.set(x,.3+h/2,z);m.castShadow=m.receiveShadow=true;scene.add(m);
+  B(w+.4,.3,d+.4,E(0x2ec4ff),x,.3+h,z);
+  if(h>28){B(.2,5,.2,M(0x8890aa),x,.3+h+2.5,z);const b=new T.Mesh(new T.SphereGeometry(.4),new T.MeshBasicMaterial({color:0xff2244}));b.position.set(x,.3+h+5,z);scene.add(b);blink.push(b);}
+  if(txt){const sw=Math.min(w*.85,13),L=label(txt,col,sw),dz=-Math.sign(z);
+    L.position.set(x,.3+Math.min(h-3,h*.8),z+dz*(d/2+.08));if(dz<0)L.rotation.y=Math.PI;scene.add(L);}
+  return m;}
+tower(22,-26,14,14,44,0,'HOTEL','#ffd36b');
+tower(-26,-20,24,12,12,1,'SEKOLAH','#7dffb0');
+tower(24,26,18,14,18,2,'RUMAH SAKIT','#ff6b8b');
+tower(-26,24,22,14,14,1,'MALL','#b58bff');
+tower(-52,-26,12,12,32,0,'BANK','#2ec4ff');
+tower(50,-24,12,10,9,2,'TOKO','#ffd36b');
+tower(52,28,14,14,34,1,'APARTEMEN','#2ec4ff');
+// atap sekolah + bendera
+{const cg=new T.ConeGeometry(1,1,4);cg.rotateY(Math.PI/4);const c=new T.Mesh(cg,M(0x1b3a8a,{emissive:0x0a1a50}));c.scale.set(17,5,8.5);c.position.set(-26,14.8,-20);c.castShadow=true;scene.add(c);}
+const flag=new T.Group();flag.position.set(-11,12.3,-10);scene.add(flag);
+{const p=new T.Mesh(new T.CylinderGeometry(.08,.1,12,8),M(0xaab4d0));p.position.set(-11,6.3,-10);scene.add(p);
+ const fm=c=>new T.MeshBasicMaterial({color:c,side:T.DoubleSide});
+ const a=new T.Mesh(new T.PlaneGeometry(3,.7),fm(0xff2244));a.position.set(1.5,-.4,0);const b=new T.Mesh(new T.PlaneGeometry(3,.7),fm(0xffffff));b.position.set(1.5,-1.1,0);flag.add(a,b);}
+// palang merah di atap rumah sakit
+B(1.3,4.5,1.3,E(0xff2244),24,.3+18+2.8,26);B(4.5,1.3,1.3,E(0xff2244),24,.3+18+2.8,26);
+// gedung latar
+for(const sx of[1,-1])for(const sz of[1,-1])for(const [a,b] of [[32,78],[56,78],[78,78],[78,56],[78,32]]){
+  const w=9+Math.random()*5,d=9+Math.random()*5;tower(sx*a,sz*b,w,d,18+Math.random()*30,Math.random()*3|0);}
+
+/* ---------- lampu jalan ---------- */
+for(const sg of[1,-1])for(const sd of[1,-1])for(let u=18;u<=80;u+=14){
+  for(const [x,z] of [[sg*u,sd*6.7],[sd*6.7,sg*u]]){
+    B(.14,6.5,.14,M(0x1a2244),x,3.55,z);
+    const hx=x*(Math.abs(x)<7?.92:1),hz=z*(Math.abs(z)<7?.92:1);
+    B(.5,.2,.5,E(0xbfe9ff),hx,6.9,hz);
+    const s=new T.Sprite(new T.SpriteMaterial({map:gt,color:0x2ec4ff,blending:T.AdditiveBlending,depthWrite:false,transparent:true,opacity:.8}));s.scale.set(4,4,1);s.position.set(hx,6.9,hz);scene.add(s);
+  }
+}
+
+/* ---------- lampu lalu lintas ---------- */
+const DIRS=[];for(const a of['x','z'])for(const s of[1,-1])DIRS.push({a,s,lat:a==='x'?-s:s});
+const HEADS={x:[],z:[]};
+for(const d of DIRS){
+  const dx=d.a==='x'?d.s:0,dz=d.a==='z'?d.s:0,al=-d.s*7.6,lt=d.lat*7.2;
+  const g=new T.Group();g.position.set(d.a==='x'?al:lt,.3,d.a==='x'?lt:al);scene.add(g);
+  B(.18,5,.18,M(0x1a2244),0,2.5,0,g);
+  const hd=new T.Group();hd.position.y=5.4;hd.rotation.y=Math.atan2(-dx,-dz);g.add(hd);
+  B(.85,2.5,.7,M(0x05060f),0,0,0,hd);
+  const hh={};
+  [['r',.85,0xff2244],['y',0,0xffc400],['g',-.85,0x16ffa0]].forEach(([k,y,c])=>{
+    const m=new T.Mesh(new T.CircleGeometry(.3,16),new T.MeshBasicMaterial({color:c}));m.position.set(0,y,.36);hd.add(m);
+    const s=new T.Sprite(new T.SpriteMaterial({map:gt,color:c,blending:T.AdditiveBlending,depthWrite:false,transparent:true}));s.scale.set(3,3,1);s.position.set(0,y,.6);hd.add(s);
+    hh[k]={m,s,c};});
+  HEADS[d.a].push(hh);
+}
+const phases=[{g:'x',s:'g',d:8},{g:'x',s:'y',d:2},{g:'',s:'r',d:1.5},{g:'z',s:'g',d:8},{g:'z',s:'y',d:2},{g:'',s:'r',d:1.5}];
+let pi=0,pt=0;
+const state=a=>{const p=phases[pi];return p.g===a?p.s:'r';};
+function redLeft(a){let acc=0;for(let k=0;k<6;k++){const p=phases[(pi+k)%6];if(p.g===a&&p.s==='g')return acc;acc+=k?p.d:p.d-pt;}return acc;}
+function paintLights(){for(const a of['x','z']){const s=state(a);for(const h of HEADS[a])for(const k of['r','y','g']){const on=s===k;h[k].m.material.color.setHex(on?h[k].c:0x15101a);h[k].s.visible=on;}}}
+
+/* ---------- kendaraan ---------- */
+const glass=M(0x06101f,{roughness:.1,metalness:.8}),tyre=M(0x05060a,{roughness:.9}),rimM=E(0x2a7fff),hl=E(0xdff6ff),tl=E(0xff2040);
+const CC=[0x1e6bff,0x0b1430,0x2ec4ff,0xe8f4ff,0x151c33,0x5b8cff,0x7a5cff,0x0a3d91];
+function wheel(g,x,y,z,r=.42,w=.3){const p=new T.Group();p.position.set(x,y,z);
+  const t=new T.Mesh(new T.CylinderGeometry(r,r,w,14),tyre);t.rotation.z=Math.PI/2;
+  const m=new T.Mesh(new T.CylinderGeometry(r*.55,r*.55,w+.03,10),rimM);m.rotation.z=Math.PI/2;p.add(t,m);g.add(p);return p;}
+function mkCar(){const g=new T.Group(),bm=M(CC[Math.random()*CC.length|0],{roughness:.25,metalness:.75}),wh=[];
+  B(1.9,.62,4.2,bm,0,.68,0,g);B(1.65,.55,2.3,glass,0,1.25,-.2,g);B(1.55,.07,2,bm,0,1.56,-.2,g);
+  for(const x of[-.65,.65]){B(.5,.18,.08,hl,x,.75,2.12,g);B(.5,.14,.08,tl,x,.8,-2.12,g);}
+  for(const x of[-1,1])for(const z of[-1.35,1.35])wh.push(wheel(g,x,.42,z));
+  floorGlow(g,3.4,6,0,0x2ec4ff,.55);floorGlow(g,3,8,7,0xcfe8ff,.2);
+  return{g,len:4.2,max:9+Math.random()*3,wh,wr:.42};}
+function mkTruck(){const g=new T.Group(),wh=[],cm=M([0x1b2d6b,0xdfe9ff,0x0b1430][Math.random()*3|0],{roughness:.4,metalness:.5}),cab=M([0x2ec4ff,0x1e6bff,0xe8f4ff][Math.random()*3|0],{roughness:.3,metalness:.7});
+  B(2.45,2.7,6,cm,0,2,-1.1,g);B(2.5,.2,6.05,E(0x2ec4ff),0,1.45,-1.1,g);B(2.5,.2,6.05,E(0x2ec4ff),0,2.9,-1.1,g);
+  B(2.3,2,2.2,cab,0,1.7,3,g);B(2.32,.8,.1,glass,0,2.2,4.12,g);B(2.3,.5,8,M(0x05060a),0,.6,0,g);
+  for(const x of[-.8,.8]){B(.5,.2,.08,hl,x,1.0,4.12,g);B(.5,.2,.08,tl,x,.9,-4.12,g);}
+  for(const x of[-1.2,1.2])for(const z of[2.9,-1.7,-3.2])wh.push(wheel(g,x,.5,z,.5,.35));
+  floorGlow(g,3.6,10.5,-.2,0x2ec4ff,.5);floorGlow(g,3.2,9,9,0xcfe8ff,.2);
+  return{g,len:8.2,max:6.5+Math.random()*2,wh,wr:.5};}
+function mkMoto(){const g=new T.Group(),wh=[],bm=M(CC[Math.random()*CC.length|0],{roughness:.3,metalness:.7}),jm=M(CC[Math.random()*CC.length|0]),pm=M(0x0d1530);
+  B(.4,.5,1.3,bm,0,.75,0,g);B(.3,.15,.7,M(0x080a12),0,1.05,-.2,g);B(.9,.07,.07,M(0x8890aa),0,1.2,.55,g);
+  B(.22,.2,.08,hl,0,.98,.72,g);B(.2,.12,.08,tl,0,.9,-.7,g);
+  wh.push(wheel(g,0,.38,.8,.38,.16),wheel(g,0,.38,-.8,.38,.16));
+  B(.5,.7,.3,jm,0,1.5,-.15,g);
+  const h=new T.Mesh(new T.SphereGeometry(.23,12,10),M(CC[Math.random()*CC.length|0],{roughness:.2,metalness:.6}));h.position.set(0,2.05,-.05);g.add(h);
+  for(const x of[-.28,.28]){B(.16,.6,.2,pm,x,.95,.05,g);const a=B(.11,.11,.9,jm,x*1.1,1.5,.2,g);a.rotation.x=.65;}
+  floorGlow(g,2.2,3.6,0,0x2ec4ff,.5);floorGlow(g,2.4,7,5.5,0xcfe8ff,.2);
+  return{g,len:2,max:10+Math.random()*3,wh,wr:.38};}
+const veh=[];
+const place=v=>{const lp=v.lat*LO[v.l];v.g.position.set(v.a==='x'?v.p:lp,.1,v.a==='x'?lp:v.p);};
+function spawn(d,l){
+  const k=d.a+d.s+l,p0=-d.s*95;
+  for(const o of veh)if(o.k===k&&Math.abs(o.p-p0)<22)return;
+  const r=Math.random(),o=r<.58?mkCar():r<.8?mkMoto():mkTruck();
+  Object.assign(o,{a:d.a,s:d.s,lat:d.lat,l,k,p:p0,v:o.max*.8});
+  o.g.rotation.y=Math.atan2(d.a==='x'?d.s:0,d.a==='z'?d.s:0);
+  o.g.traverse(m=>{if(m.isMesh&&m.material.isMeshStandardMaterial)m.castShadow=true;});
+  place(o);scene.add(o.g);veh.push(o);}
+function updVeh(v,dt){
+  const st=state(v.a),front=v.p+v.s*v.len/2,d=(-STOP*v.s-front)*v.s;let allow=v.max;
+  if(st!=='g'&&d>-.3&&!(st==='y'&&d<v.v*v.v/12+.6))allow=Math.min(allow,Math.sqrt(10*Math.max(0,d-.8)));
+  let best=1e9,lead=null;
+  for(const o of veh){if(o===v||o.k!==v.k)continue;const gap=(o.p-v.p)*v.s-(o.len+v.len)/2;if(gap>-1&&gap<best){best=gap;lead=o;}}
+  if(lead)allow=Math.min(allow,Math.sqrt(lead.v*lead.v+12*Math.max(0,best-1.8)));
+  v.v=v.v>allow?Math.max(allow,v.v-10*dt):Math.min(allow,v.v+4*dt);
+  v.p+=v.s*v.v*dt;place(v);
+  for(const w of v.wh)w.rotation.x+=v.v*dt/v.wr;
+}
+
+/* ---------- manusia ---------- */
+const SK=[0xf1c9a5,0xc68a5e,0x8d5a3b],SH=[0x2ec4ff,0x5b8cff,0xe8f4ff,0xffc857,0xff6b8b,0x7a5cff,0x1e6bff];
+function person(){const g=new T.Group(),sh=M(SH[Math.random()*SH.length|0],{roughness:.7}),pm=M(0x0d1530,{roughness:.8}),sk=M(SK[Math.random()*3|0],{roughness:.8});
+  B(.5,.62,.28,sh,0,1.2,0,g);const h=new T.Mesh(new T.SphereGeometry(.16,12,10),sk);h.position.y=1.68;g.add(h);
+  const lim=(x,y,hh,m)=>{const p=new T.Group();p.position.set(x,y,0);B(.17,hh,.2,m,0,-hh/2,0,p);g.add(p);return p;};
+  const o={g,ll:lim(-.14,.88,.88,pm),lr:lim(.14,.88,.88,pm),al:lim(-.33,1.5,.62,sh),ar:lim(.33,1.5,.62,sh)};
+  g.traverse(m=>{if(m.isMesh)m.castShadow=true;});g.position.y=.3;return o;}
+function swing(p,t,on){const s=on?Math.sin(t)*.7:0;p.ll.rotation.x=s;p.lr.rotation.x=-s;p.al.rotation.x=-s*.8;p.ar.rotation.x=s*.8;}
+const peds=[],CW=[];
+for(const a of['x','z'])for(const sg of[1,-1])CW.push({a,c:a==='x'?'z':'x',f:sg*9});
+function spawnPed(){if(peds.length>=18)return;const w=CW[Math.random()*4|0],p=person();
+  Object.assign(p,{w,dir:Math.random()<.5?1:-1,q:-17,f:w.f+(Math.random()*2-1)*1.1,sp:1.5+Math.random()*.7,com:false});scene.add(p.g);peds.push(p);}
+function updPed(p,dt){
+  const gate=p.w.a;let sp=p.sp;
+  if(!p.com&&p.q>=-7.4&&p.q<-6.8){if(state(gate)==='r'&&redLeft(gate)>7.5)p.com=true;else{p.q=-7.4;sp=0;}}
+  if(p.com&&p.q>-6.8&&p.q<6.8&&state(gate)!=='r')sp*=1.7;
+  p.q+=sp*dt;const s=p.q*p.dir;
+  p.g.position.x=p.w.c==='z'?p.f:s;p.g.position.z=p.w.c==='z'?s:p.f;
+  p.g.rotation.y=Math.atan2(p.w.c==='x'?p.dir:0,p.w.c==='z'?p.dir:0);
+  swing(p,clock*sp*4.2,sp>0);p.g.position.y=.3+(sp>0?Math.abs(Math.sin(clock*sp*4.2))*.05:0);
+}
+const pat=[];
+function mkPat(c,f,sg){const p=person();Object.assign(p,{c,f,sg,q:14+Math.random()*44,d:Math.random()<.5?1:-1,sp:1.1+Math.random()*.6});scene.add(p.g);return p;}
+for(const sx of[1,-1])for(const sz of[1,-1]){pat.push(mkPat('x',sz*8.6,sx));pat.push(mkPat('z',sx*8.6,sz));}
+function updPat(p,dt){
+  p.q+=p.d*p.sp*dt;if(p.q>58){p.q=58;p.d=-1;}if(p.q<14){p.q=14;p.d=1;}
+  const s=p.sg*p.q;p.g.position.x=p.c==='x'?s:p.f;p.g.position.z=p.c==='x'?p.f:s;
+  const w=p.sg*p.d;p.g.rotation.y=Math.atan2(p.c==='x'?w:0,p.c==='z'?w:0);
+  swing(p,clock*p.sp*4.2,true);
+}
+
+/* ---------- simulasi ---------- */
+let clock=0,pedT=0;
+function step(dt){
+  clock+=dt;pt+=dt;if(pt>=phases[pi].d){pt=0;pi=(pi+1)%6;}
+  paintLights();
+  for(const d of DIRS)for(let l=0;l<2;l++)if(Math.random()<dt*.22)spawn(d,l);
+  pedT-=dt;if(pedT<=0){spawnPed();pedT=.8+Math.random()*1.4;}
+  for(const v of veh)updVeh(v,dt);
+  for(let i=veh.length-1;i>=0;i--)if(Math.abs(veh[i].p)>100){scene.remove(veh[i].g);veh.splice(i,1);}
+  for(const p of peds)updPed(p,dt);
+  for(let i=peds.length-1;i>=0;i--)if(peds[i].q>17){scene.remove(peds[i].g);peds.splice(i,1);}
+  for(const p of pat)updPat(p,dt);
+  flag.rotation.y=Math.sin(clock*2.2)*.3;
+  ring.material.opacity=.35+.25*Math.sin(clock*3);
+  const on=Math.sin(clock*4)>0;for(const b of blink)b.visible=on;
+}
+for(let i=0;i<500;i++)step(.1);
+
+/* ---------- kamera ---------- */
+let th=Math.PI/4,ph=1.02,r=140,tth=th,tph=ph,tr=73,auto=true,drag=false,px=0,py=0,paused=false,preset=0;
+const PRE=[{t:Math.PI/4,p:1.02,r:73},{t:.6,p:.07,r:105},{t:.55,p:1.43,r:30}];
+const cv=renderer.domElement;
+cv.addEventListener('pointerdown',e=>{drag=true;px=e.clientX;py=e.clientY;});
+addEventListener('pointerup',()=>drag=false);
+addEventListener('pointermove',e=>{if(!drag)return;tth-=(e.clientX-px)*.006;tph=Math.min(1.5,Math.max(.07,tph-(e.clientY-py)*.005));px=e.clientX;py=e.clientY;});
+addEventListener('wheel',e=>{tr=Math.min(90,Math.max(16,tr+e.deltaY*.05));},{passive:true});
+const $=id=>document.getElementById(id);
+$('bRot').onclick=e=>{auto=!auto;e.target.classList.toggle('on',auto);};
+$('bCam').onclick=()=>{preset=(preset+1)%3;const p=PRE[preset];tth=p.t;tph=p.p;tr=p.r;};
+$('bPause').onclick=e=>{paused=!paused;e.target.textContent=paused?'Lanjut':'Jeda';e.target.classList.toggle('on',paused);};
+addEventListener('resize',()=>{camera.aspect=innerWidth/innerHeight;camera.updateProjectionMatrix();renderer.setSize(innerWidth,innerHeight);});
+
+const COL={g:'#16ffa0',y:'#ffd000',r:'#ff2e55'};
+let last=performance.now(),hudT=0;
+function loop(now){
+  requestAnimationFrame(loop);
+  const dt=Math.min(.05,(now-last)/1000);last=now;
+  if(!paused)step(dt);
+  if(auto&&!drag)tth+=dt*.08;
+  const k=Math.min(1,dt*3);th+=(tth-th)*k;ph+=(tph-ph)*k;r+=(tr-r)*k;
+  camera.position.set(r*Math.sin(ph)*Math.sin(th),2+r*Math.cos(ph),r*Math.sin(ph)*Math.cos(th));
+  camera.lookAt(0,2,0);
+  hudT-=dt;if(hudT<=0){hudT=.25;
+    for(const a of['x','z']){const d=$('d'+a);d.style.background=d.style.color=COL[state(a)];}
+    $('cnt').textContent='Kendaraan '+veh.length+' · Pejalan kaki '+(peds.length+pat.length);}
+  renderer.render(scene,camera);
+}
+requestAnimationFrame(loop);
+</script>
+</body>
+</html>
